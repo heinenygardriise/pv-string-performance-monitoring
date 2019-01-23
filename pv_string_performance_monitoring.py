@@ -13,6 +13,37 @@ import numpy as np
 
 
 
+def get_string_index_map(input_df):
+    ''' 
+    Maps string names to column numbers
+    Returns input_df with numbered columns and map_df with the mapping between the column numers
+    and the old column names
+    '''
+    map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
+    input_df.columns = range(len(input_df.columns))
+    return [input_df, map_df]
+
+
+
+class pm_frame():
+    ''' 
+    A class that (potentially) contains methods and variables that will be relevant to PV string
+    performance monitoring
+    '''
+    def __init__(self, input_df):
+        ''' 
+        Maps string names to column numbers
+        Returns input_df with numbered columns and map_df with the mapping between the column numers
+        and the old column names
+        '''
+        self.df = input_df
+        self.map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
+        self.df.columns = range(len(input_df.columns))
+    
+    
+
+
+
 
 def compare_strings(input_df):
     ''' 
@@ -30,20 +61,17 @@ def compare_strings(input_df):
     # These are the percentiles we are looking for in the dataset
     percentiles = [1,2,3,4,5,10,20,30,40,45]    
     
-    
-    map_df = pd.DataFrame(index=range(len(input_df.columns)), 
-                          data={'string_names': input_df.columns}) # Maps index # to column names
-    aggregates = pd.DataFrame(index=range(len(input_df.columns)), 
-                              data=input_df.sum(axis=0).values) # Sum of productipon of each string
+    # Sum of productipon of each string
+    aggregates = pd.DataFrame(index=input_df.columns, data=input_df.sum(axis=0).values) 
     
     meanProd   = aggregates.mean() # Mean of all sums
     medianProd   = aggregates.median() # Median of all sums
     
     # Initializing...
-    string_performance = pd.DataFrame(index=range(len(input_df.columns)), 
+    string_performance = pd.DataFrame(index=input_df.columns, 
                                       columns=['dev_from_mean', 'dev_from_median'],
                                       data=np.nan)
-    trigger_string_performance = pd.DataFrame(index=range(len(input_df.columns)), 
+    trigger_string_performance = pd.DataFrame(index=input_df.columns, 
                                               columns=percentiles)
     
     # Fractional deviation from mean and median
@@ -53,7 +81,7 @@ def compare_strings(input_df):
     for i in percentiles: # Set True if aggregate < ith percentile, otherwise False
         trigger_string_performance[i] = aggregates < aggregates.quantile(i/100)
     
-    return [trigger_string_performance, string_performance, map_df]
+#    return [trigger_string_performance, string_performance, map_df]
 
 
 
@@ -67,7 +95,16 @@ def historical_relative_performance_per_string(input_df):
         - input_df: (historical) time series of currents or powers of different strings
                     (typically > 1 year; 1 hour resolution (or less))
     '''
-    pass 
+    input_df[input_df<=0] = np.nan
+    print(input_df.iloc[:,1].dropna())
+    daily_sums = pd.DataFrame(columns=input_df.columns, 
+                              data=input_df.resample('D').sum())
+    metrics = pd.DataFrame(index=daily_sums.columns,
+                           columns=input_df.iloc[0:1].describe().index,
+                           data=daily_sums.describe().values.transpose())
+    
+    
+    return metrics
 
 
 
@@ -82,16 +119,13 @@ def find_limits_of_performance_naive(input_df):
                     (typically > 1 year; 1 hour resolution (or less))
     
     Temporary: Plotting cumulative distribution function of currents and median current per day
-    '''
-    
-    map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
-    
+    '''    
 #    times_of_zero = input_df.loc[input_df.quantile(.75, axis=1)<=0].index # 75% of strings are 0
     input_df[input_df<=0] = np.nan
     aggregates = pd.DataFrame(columns=['Daily sum of medians'], 
                               data=input_df.median(axis=1).resample('D').sum())
     
-#    metrics = pd.DataFrame(index=range(len(input_df.columns)), 
+#    metrics = pd.DataFrame(index=input_df.columns, 
 #                           columns=input_df.iloc[0:1].describe().index,
 #                           data=input_df.describe().values.transpose())
     
