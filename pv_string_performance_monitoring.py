@@ -58,30 +58,51 @@ def compare_strings(input_df):
 
 
 
+def historical_relative_performance_per_string(input_df):
+    '''
+    Looking at historical data, find the the range of the (relative) performance during 
+    "normal operation" (no fault) of each string (relative to mean/median). 
+    
+    Inputs:
+        - input_df: (historical) time series of currents or powers of different strings
+                    (typically > 1 year; 1 hour resolution (or less))
+    '''
+    pass 
+
 
 
 def find_limits_of_performance_naive(input_df):
     '''
     Looking at historical data, find limits for which the strings sohuld perform within.
-    This function is naive, in that it only looks at 
+    This function is naive, in that it only looks at the input_df, and does not take into account
+    any other information (irradiance, temperature, etc.)
     
     Inputs:
         - input_df: (historical) time series of currents or powers of different strings
                     (typically > 1 year; 1 hour resolution (or less))
+    
+    Temporary: Plotting cumulative distribution function of currents and median current per day
     '''
     
     map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
     
 #    times_of_zero = input_df.loc[input_df.quantile(.75, axis=1)<=0].index # 75% of strings are 0
     input_df[input_df<=0] = np.nan
-
-    metrics = pd.DataFrame(index=range(len(input_df.columns)), 
-                           columns=input_df.iloc[0:1].describe().index,
-                           data=input_df.describe().values.transpose())
+    aggregates = pd.DataFrame(columns=['Daily sum of medians'], 
+                              data=input_df.median(axis=1).resample('D').sum())
+    
+#    metrics = pd.DataFrame(index=range(len(input_df.columns)), 
+#                           columns=input_df.iloc[0:1].describe().index,
+#                           data=input_df.describe().values.transpose())
     
     import matplotlib.pyplot as plt
-    quantiles = [input_df.quantile(i/100).mean() for i in range(100)]
+    plt.close('all')
+    plt.figure(figsize=(14,6))
+    quantiles = [aggregates.quantile(i/100).mean() for i in range(100)]
     plt.plot(range(100), quantiles)
+    
+    plt.figure(figsize=(14,6))
+    plt.plot(aggregates)
     
 #    limits = pd.DataFrame(index=range(len(input_df.columns)), 
 #                          data={'extremely_low_performance_check_data_quality': input_df., 
