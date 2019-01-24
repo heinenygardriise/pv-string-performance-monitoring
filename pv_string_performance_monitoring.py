@@ -14,6 +14,7 @@ Functions:
 
 import pandas as pd
 import numpy as np
+import pvlib
 
 
 
@@ -65,6 +66,67 @@ def filter_after_aggregate(QPR):
     QPR[np.abs(QPR.ffill()-QPR.ffill().rolling(7, center=True).median())>std] = np.nan
     
     return QPR
+
+
+
+
+def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, clearsky_filter=True,
+                            filter_4_hours=False):
+    ''' 
+    A general filter for removing features irrelevant to string performance monitoring
+    (after aggregating)
+    '''
+    
+    input_df[GHI<=0] = np.nan
+    input_df[input_df<=0] = np.nan
+    
+    Location = pvlib.location.Location(latitude, longitude, tz, altitude)
+    clearsky = Location.get_clearsky(GHI.index)
+    
+    if clearsky_filter==True:
+        print('Clearsky filtering...')
+        window_length = GHI.index.freq*6
+        GHI['Date'] = GHI.index.date
+        mean_diff = GHI.groupby('Date').mean().std()
+        max_diff = mean_diff
+        slope_dev = mean_diff/2
+        upper_line_length = mean_diff/window_length
+        lower_line_length = 0
+        var_diff = np.inf
+        max_iterations = 50
+        
+        clearTimes = pvlib.clearsky.detect_clearsky(GHI, clearsky['ghi'], GHI.index,
+            window_length, mean_diff, max_diff, slope_dev,
+            upper_line_length, lower_line_length, var_diff, max_iterations)
+        input_df = input_df[clearTimes]
+        GHI = GHI[clearTimes]
+        input_df = input_df[GHI>500]
+    else: # or by fraction of clearsky (and hours)
+#        clearsky = clearsky.reindex(input_df.index, method='nearest')
+        input_df = input_df[GHI > 0.9*clearsky['ghi']]
+
+    if filter_4_hours:
+        solarPosition = Location.get_solarposition(input_df.index)
+        solarPosition['Date'] = solarPosition.index.date
+        solarNoonByDate = pd.Series(index=solarPosition.groupby('Date').min().index,
+                            data=[solarPosition.loc[solarPosition['Date']==date,'zenith'].idxmin()
+                                  for date in solarPosition.groupby('Date').min().index])
+        solarNoon = pd.Series(index=input_df.index, data=[solarNoonByDate.loc[date] for date 
+                                                          in input_df.index.date])
+        timeDiffs = np.abs(input_df.index-solarNoon)
+        input_df = input_df[timeDiffs<pd.Timedelta('2 hours')]
+        
+#        SolarNoonTimeDecimal = np.mean(
+#                [solarNoon.hour+solarNoon.minute/60
+#                 for date in solarPosition.groupby('Date').min().index])
+        
+#        SolarNoonHour = int(np.round(SolarNoonTimeDecimal))
+#        maxHour = SolarNoonHour + 2
+#        minHour = SolarNoonHour - 2
+#        input_df = input_df[input_df.index.hour<maxHour] # Exclude times too far from solar noon
+#        input_df = input_df[input_df.index.hour>minHour]
+        
+    return input_df
 
 
 

@@ -22,9 +22,9 @@ pickleName = sitename+'_data_everything.pickle'
 with open(saveFolderName+pickleName,"rb") as pickle_in:
     [currentDf, voltageDf, misc_df] = dfDummy = pickle.load(pickle_in)
     
-currentDf = currentDf[~currentDf.index.duplicated(keep='first')]
-voltageDf = voltageDf[~voltageDf.index.duplicated(keep='first')]
-misc_df = misc_df[~misc_df.index.duplicated(keep='first')]
+currentDf = currentDf.resample('10T').median()
+voltageDf = voltageDf.resample('10T').median()
+misc_df = misc_df.resample('10T').median()
 
 
 
@@ -49,15 +49,27 @@ misc_df = misc_df[~misc_df.index.duplicated(keep='first')]
     
 
 #%% Find limits of performance    
+latitude = 30.144921 #   
+longitude = 35.821390 #   
+altitude = 800 # moh.
+tz = 'Asia/Damascus'
 
 #pspm.find_limits_of_performance_naive(currentDf)
 
-
 pspm_df, map_df = pspm.get_string_index_map(currentDf)
+
+pspm_df2 = pspm.filter_before_aggregate(pspm_df, misc_df.GHI.to_frame(), latitude, longitude, tz, 
+                                        altitude, clearsky_filter=True, filter_4_hours=False)
+
+
 daily_QPR, daily_H_poa = pspm.Quasi_PR(pspm_df, misc_df.POAI, misc_df.GHI, 'D')
 
 daily_QPR = pspm.filter_after_aggregate(daily_QPR)
-plt.figure(figsize=(14,6))
+
+plt.figure(figsize=(16,5))
+plt.plot(pspm_df.index, pspm_df.iloc[:,1])
+plt.plot(pspm_df2.index, pspm_df2.iloc[:,1])
+
 plt.scatter(daily_QPR.index, daily_QPR.iloc[:,1])
 
 
