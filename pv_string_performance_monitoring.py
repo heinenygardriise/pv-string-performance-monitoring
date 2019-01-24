@@ -4,7 +4,11 @@ pv_string_performance_monitoring.py
 Created on Thu Jan 17 12:19:02 2019
 
  - A library of functions for PV string performance analytics
-    
+
+Functions:
+    - get_string_index_map
+
+
 @author: asmunds
 """
 
@@ -19,29 +23,48 @@ def get_string_index_map(input_df):
     Returns input_df with numbered columns and map_df with the mapping between the column numers
     and the old column names
     '''
-    map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
-    input_df.columns = range(len(input_df.columns))
-    return [input_df, map_df]
+    output_df = input_df.copy()
+    map_df = pd.DataFrame(index=range(len(output_df.columns)), data={'string_names': output_df.columns})
+    output_df.columns = range(len(output_df.columns))
+    
+    return  output_df, map_df
 
 
 
-class pm_frame():
+
+def Quasi_PR(input_df, POAI, GHI=None, frequency='D'):
     ''' 
-    A class that (potentially) contains methods and variables that will be relevant to PV string
-    performance monitoring
+    Calculates a the input_df divided by the plane of array irradiance and returns this 
+    resampled by the frequency (e.g. 'D' (daily), 'M' (monthly), etc.). 
+    Also return H_poa, which is the daily irradiation in the plane of array (in Wh)
     '''
-    def __init__(self, input_df):
-        ''' 
-        Maps string names to column numbers
-        Returns input_df with numbered columns and map_df with the mapping between the column numers
-        and the old column names
-        '''
-        self.df = input_df
-        self.map_df = pd.DataFrame(index=range(len(input_df.columns)), data={'string_names': input_df.columns})
-        self.df.columns = range(len(input_df.columns))
-    
-    
+    input_freq = 60/np.round(int(np.mean(POAI.index[1:] - POAI.index[:-1]))/60e9)
+    try:
+        QPR = input_df.resample(frequency).sum().divide(POAI.resample(frequency).sum(), axis='index')
+        H_poa = POAI.resample(frequency).sum()/input_freq
+        return QPR, H_poa
 
+    except:
+        pass
+  
+    
+    
+def filter_after_aggregate(QPR):
+    ''' 
+    A general filter for removing features irrelevant to string performance monitoring
+    (after aggregating)
+    '''
+    # Remove obvious outliers
+    Q1 = QPR.quantile(.1)
+    Q9 = QPR.quantile(.9)
+    QPR[QPR>2*Q1] = np.nan
+    QPR[QPR<Q9/2] = np.nan
+    
+    # Remove "fluctuations"
+    std = QPR.std()
+    QPR[np.abs(QPR.ffill()-QPR.ffill().rolling(7, center=True).median())>std] = np.nan
+    
+    return QPR
 
 
 
@@ -94,17 +117,19 @@ def historical_relative_performance_per_string(input_df):
     Inputs:
         - input_df: (historical) time series of currents or powers of different strings
                     (typically > 1 year; 1 hour resolution (or less))
+    Outputs:
+        - metrics: pandas.describe() of daily sums of input_df
     '''
     input_df[input_df<=0] = np.nan
-    print(input_df.iloc[:,1].dropna())
     daily_sums = pd.DataFrame(columns=input_df.columns, 
                               data=input_df.resample('D').sum())
     metrics = pd.DataFrame(index=daily_sums.columns,
                            columns=input_df.iloc[0:1].describe().index,
                            data=daily_sums.describe().values.transpose())
     
-    
     return metrics
+
+
 
 
 
@@ -164,3 +189,28 @@ def train_digital_twin():
     Train digitial twins on each string
     '''
     pass
+
+
+
+class pm_frame(pd.DataFrame):
+    ''' 
+    Apparantly, making subclasses of pandas Dataframes is discouraged (see 
+    http://pandas.pydata.org/pandas-docs/stable/extending.html#extending-subclassing-pandas)
+    
+    A class that (potentially) contains methods and variables that will be relevant to PV string
+    performance monitoring
+    '''
+#    def __init__(self, input_df):
+#        self = input_df.copy()
+        
+    def reindex(self):
+        ''' 
+        Maps string names to column numbers
+        Returns input_df with numbered columns and map_df with the mapping between the column numers
+        and the old column names
+        '''
+        map_df = pd.DataFrame(index=range(len(self.columns)), 
+                              columns=['string names'], 
+                              data=self.columns)
+        self.columns = range(len(self.columns))
+        return map_df

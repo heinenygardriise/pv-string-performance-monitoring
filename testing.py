@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import pv_string_performance_monitoring as pspm
 import pickle
+import matplotlib.pyplot as plt
 
 
 
@@ -29,7 +30,7 @@ misc_df = misc_df[~misc_df.index.duplicated(keep='first')]
 
 #%% Prepare data
 
-[currentDf, map_df] = pspm.get_string_index_map(currentDf)
+#[currentDf, map_df] = pspm.get_string_index_map(currentDf)
 
 
 
@@ -48,8 +49,17 @@ misc_df = misc_df[~misc_df.index.duplicated(keep='first')]
     
 
 #%% Find limits of performance    
-#metrics = pspm.historical_relative_performance_per_string(currentDf)
+
 #pspm.find_limits_of_performance_naive(currentDf)
 
-df = pspm.pm_frame(currentDf)
-print(df.df)
+
+pspm_df, map_df = pspm.get_string_index_map(currentDf)
+daily_QPR, daily_H_poa = pspm.Quasi_PR(pspm_df, misc_df.POAI, misc_df.GHI, 'D')
+
+daily_QPR = pspm.filter_after_aggregate(daily_QPR)
+plt.figure(figsize=(14,6))
+plt.scatter(daily_QPR.index, daily_QPR.iloc[:,1])
+
+
+
+#metrics = pspm.historical_relative_performance_per_string(daily_QPR)
