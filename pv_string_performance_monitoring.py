@@ -6,7 +6,12 @@ Created on Thu Jan 17 12:19:02 2019
  - A library of functions for PV string performance analytics
 
 Functions:
-    - get_string_index_map
+    - get_string_index_map: returns datframe with numbered columns and a mapping of column names to column numbers
+    - Quasi_PR: returns the daily sum of the input columns divided by the daily sum of the irradiance
+    - filter_after_aggregate: removes outliers and fluctuations
+    - filter_before_aggregate: filters away 0-values, optional clearsky-filtering, optinal filtering 
+        on # of hours around noon
+    - compare_strings: Compare strings of a pv system by current/power
 
 
 @author: asmunds
@@ -15,6 +20,8 @@ Functions:
 import pandas as pd
 import numpy as np
 import pvlib
+
+
 
 
 
@@ -29,6 +36,7 @@ def get_string_index_map(input_df):
     output_df.columns = range(len(output_df.columns))
     
     return  output_df, map_df
+
 
 
 
@@ -48,6 +56,7 @@ def Quasi_PR(input_df, POAI, GHI=None, frequency='D'):
     except:
         pass
   
+    
     
     
 def filter_after_aggregate(QPR):
@@ -70,63 +79,93 @@ def filter_after_aggregate(QPR):
 
 
 
+
+
 def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, clearsky_filter=True,
-                            filter_4_hours=False):
+                            filter_by_hours=False, GHI_cutoff=500):
     ''' 
-    A general filter for removing features irrelevant to string performance monitoring
-    (after aggregating)
-    '''
+    A filter for filtering for clearsky (optional) and remain with the [filter_by_hours] hours 
+    around solar noon (optional)
+    If filter_by_hours=False: Keep all hours
+    If filter_by_hours = x (where x is an integer): Filter for x hours around solar noon
+    (before aggregating)
     
-    input_df[GHI<=0] = np.nan
+    The clearsky filtering has been optimized for data with 10-minute intervals
+    '''
+    input_df = input_df.copy()
+    mean_interval = np.round(int(np.mean(GHI.index[1:] - GHI.index[:-1]))/60e9)
+
+    GHI_freq = GHI.index.freq
+    if GHI_freq:
+        if ~isinstance(GHI_freq, str):
+            GHI_freq = GHI_freq.freqstr
+        GHI[GHI.isna()] = 0
+        GHI = GHI.resample(GHI_freq).mean()
+    else:
+        print('GHI needs to have a frequency. Clearsky filtering was not possible')
+        clearsky_filter=False
+    
+    input_df.loc[GHI<GHI_cutoff] = np.nan
     input_df[input_df<=0] = np.nan
     
+    
+    print('Calculating clear sky irradiance')
     Location = pvlib.location.Location(latitude, longitude, tz, altitude)
     clearsky = Location.get_clearsky(GHI.index)
     
     if clearsky_filter==True:
         print('Clearsky filtering...')
-        window_length = GHI.index.freq*6
-        GHI['Date'] = GHI.index.date
-        mean_diff = GHI.groupby('Date').mean().std()
-        max_diff = mean_diff
-        slope_dev = mean_diff/2
-        upper_line_length = mean_diff/window_length
-        lower_line_length = 0
-        var_diff = np.inf
-        max_iterations = 50
+        window_length = mean_interval*6
+        GHI_frame = pd.DataFrame(GHI)
+        GHI_frame['Date'] = GHI_frame.index.date
+        mean_diff = GHI_frame.groupby('Date').mean().values.std()
+        clearTimes, components, alpha = pvlib.clearsky.detect_clearsky(
+                                                measured=GHI, 
+                                                clearsky=clearsky['ghi'], 
+                                                times=GHI.index, 
+                                                window_length=window_length,
+                                                mean_diff=mean_diff*2,
+                                                max_diff=mean_diff*2,
+                                                lower_line_length=-mean_diff*mean_interval,
+                                                upper_line_length=mean_diff*mean_interval,
+                                                var_diff=mean_diff/2,
+                                                slope_dev=mean_diff/2,
+                                                max_iterations=50,
+                                                return_components=True)
+#        for key in components.keys():    
+#            print(key, np.sum(components[key]))
+#        print(alpha)
+#        print(clearTimes)
         
-        clearTimes = pvlib.clearsky.detect_clearsky(GHI, clearsky['ghi'], GHI.index,
-            window_length, mean_diff, max_diff, slope_dev,
-            upper_line_length, lower_line_length, var_diff, max_iterations)
-        input_df = input_df[clearTimes]
-        GHI = GHI[clearTimes]
-        input_df = input_df[GHI>500]
     else: # or by fraction of clearsky (and hours)
-#        clearsky = clearsky.reindex(input_df.index, method='nearest')
-        input_df = input_df[GHI > 0.9*clearsky['ghi']]
+        clearTimes = (GHI > 0.9*clearsky['ghi'])
 
-    if filter_4_hours:
+    input_df.loc[~clearTimes] = np.nan
+    GHI.loc[~clearTimes] = np.nan
+    GHI.loc[GHI<GHI_cutoff] = np.nan
+
+    if filter_by_hours:
+        print('Filter by hours...')
         solarPosition = Location.get_solarposition(input_df.index)
         solarPosition['Date'] = solarPosition.index.date
+
         solarNoonByDate = pd.Series(index=solarPosition.groupby('Date').min().index,
                             data=[solarPosition.loc[solarPosition['Date']==date,'zenith'].idxmin()
                                   for date in solarPosition.groupby('Date').min().index])
         solarNoon = pd.Series(index=input_df.index, data=[solarNoonByDate.loc[date] for date 
                                                           in input_df.index.date])
         timeDiffs = np.abs(input_df.index-solarNoon)
-        input_df = input_df[timeDiffs<pd.Timedelta('2 hours')]
-        
-#        SolarNoonTimeDecimal = np.mean(
-#                [solarNoon.hour+solarNoon.minute/60
-#                 for date in solarPosition.groupby('Date').min().index])
-        
-#        SolarNoonHour = int(np.round(SolarNoonTimeDecimal))
-#        maxHour = SolarNoonHour + 2
-#        minHour = SolarNoonHour - 2
-#        input_df = input_df[input_df.index.hour<maxHour] # Exclude times too far from solar noon
-#        input_df = input_df[input_df.index.hour>minHour]
-        
-    return input_df
+        input_df.loc[timeDiffs>pd.Timedelta(str(filter_by_hours/2)+' hours')] = np.nan
+        GHI.loc[timeDiffs>pd.Timedelta(str(filter_by_hours/2)+' hours')] = np.nan
+                
+    if clearsky_filter:
+        return input_df, GHI, clearsky, clearTimes, components
+    else:
+        return input_df, GHI, clearsky, clearTimes
+
+
+
+
 
 
 
