@@ -21,33 +21,14 @@ sitename = 'GLAE'
 saveFolderName = r"C:\Users\asmunds\OneDrive - Institutt for Energiteknikk\pv-string-performance-monitoring\Testing data\\"
 pickleName = sitename+'_data_everything.pickle'
 with open(saveFolderName+pickleName,"rb") as pickle_in:
-    [currentDf, voltageDf, misc_df] = dfDummy = pickle.load(pickle_in)
+    [currentDf, voltageDf, misc_df] = pickle.load(pickle_in)
     
 currentDf = currentDf.resample('10T').median()
 voltageDf = voltageDf.resample('10T').median()
 misc_df = misc_df.resample('10T').median()
 
 
-
-#%% Prepare data
-
-#[currentDf, map_df] = pspm.get_string_index_map(currentDf)
-
-
-
-#useIndexes = misc_df.loc[misc_df.POAI>0].index
-#PM = pd.DataFrame(index=useIndexes, columns=currentDf.columns)
-#for i,col in enumerate(currentDf.columns):
-#    if ~i%100: print(i)
-#    PM[col] = currentDf.loc[useIndexes,col]/misc_df.POAI.loc[useIndexes]
-
-
-
-#%% Call string_comparison
-
-#[trigger_string_performance, string_performance, map_df] = pspm.compare_strings(
-#        currentDf.loc['2018-05'])
-    
+   
 
 #%% Testing filtering algorithm
 # Illustrating the difference between the different clearsky filtering
@@ -58,27 +39,46 @@ longitude = 35.821390 #
 altitude = 800 # moh.
 tz = 'Asia/Damascus'
 
-pspm_df, map_df = pspm.get_string_index_map(currentDf)
+pspm_df, map_df = pspm.get_string_index_map(currentDf, tagConvention='SMA')
 
-pspm_df2, GHI_2, clearsky2, clearTimes2 = pspm.filter_before_aggregate(
-                                        pspm_df, misc_df.GHI, latitude, longitude, tz, 
+
+use_indexes2, clearsky2, clearTimes2 = pspm.filter_before_aggregate(
+                                        misc_df.GHI, latitude, longitude, tz, 
                                         altitude, clearsky_filter=False, filter_by_hours=4,
                                         GHI_cutoff=100)
 
-pspm_df3, GHI_3, clearsky3, clearTimes3, components = pspm.filter_before_aggregate(
-                                            pspm_df, misc_df.GHI, latitude, longitude, tz, 
+use_indexes3, clearsky3, clearTimes3, detect_cs_components = pspm.filter_before_aggregate(
+                                            misc_df.GHI, latitude, longitude, tz, 
                                             altitude, clearsky_filter=True, filter_by_hours=4,
                                             GHI_cutoff=100)
 
 plt.figure(figsize=(16,5))
 plt.plot(pspm_df.index, pspm_df.iloc[:,1],'k', linewidth=.5)
-plt.scatter(pspm_df2.index, pspm_df2.iloc[:,1], marker='x')
-plt.scatter(pspm_df3.index, pspm_df3.iloc[:,1], marker='o', facecolors='none', edgecolors='r')
+plt.scatter(pspm_df.loc[use_indexes2].index, pspm_df.loc[use_indexes2,1], marker='x')
+plt.scatter(pspm_df.loc[use_indexes3].index, pspm_df.loc[use_indexes3,1], marker='o', facecolors='none', edgecolors='r')
 
 plt.figure(figsize=(16,5))
 plt.plot(misc_df.index, misc_df.GHI,'k', linewidth=.5)
-plt.scatter(GHI_2.index, GHI_2, marker='x')
-plt.scatter(GHI_3.index, GHI_3, marker='o', facecolors='none', edgecolors='r')
+plt.scatter(pspm_df.loc[use_indexes2].index, misc_df.loc[use_indexes2,'GHI'], marker='x')
+plt.scatter(pspm_df.loc[use_indexes3].index, misc_df.loc[use_indexes3,'GHI'], marker='o', 
+            facecolors='none', edgecolors='r')
+
+
+use_indexes3.loc[misc_df.Tmod.isna() | misc_df.POAI.isna()] = False
+
+daily_QPR, daily_H_poa = pspm.Quasi_PR(pspm_df, misc_df.POAI, misc_df.Tmod, -0.00045, 'D')
+daily_QPR3, daily_H_poa3 = pspm.Quasi_PR(pspm_df.loc[use_indexes3], misc_df.loc[use_indexes3,'POAI'], 
+                                         misc_df.loc[use_indexes3,'Tmod'], -0.00045, 'D')
+
+fig, ax = plt.subplots(figsize=(16,5))
+#ax.scatter(daily_QPR.index, daily_QPR.iloc[:,1])
+#ax.scatter(daily_QPR3.index, daily_QPR3.iloc[:,1], marker='^')
+
+daily_QPR_filter = pspm.filter_after_aggregate(daily_QPR)
+daily_QPR_filter3 = pspm.filter_after_aggregate(daily_QPR3)
+ax.scatter(daily_QPR_filter.index, daily_QPR_filter.iloc[:,1])
+ax.scatter(daily_QPR_filter3.index, daily_QPR_filter3.iloc[:,1], 
+            marker='^', facecolors='none', edgecolors='r')
 
 
 
@@ -86,11 +86,14 @@ plt.scatter(GHI_3.index, GHI_3, marker='o', facecolors='none', edgecolors='r')
 
 
 
+#%% Call string_comparison
+
+#[trigger_string_performance, string_performance, map_df] = pspm.compare_strings(
+#        currentDf.loc['2018-05'])
 
 
-#daily_QPR, daily_H_poa = pspm.Quasi_PR(pspm_df, misc_df.POAI, misc_df.GHI, 'D')
-#
-#daily_QPR = pspm.filter_after_aggregate(daily_QPR)
+
+
 
 
 #%% Find limits of performance    

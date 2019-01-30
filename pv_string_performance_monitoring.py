@@ -25,31 +25,46 @@ import pvlib
 
 
 
-def get_string_index_map(input_df):
+def get_string_index_map(current_df, tagConvention=None):
     ''' 
     Maps string names to column numbers
     Returns input_df with numbered columns and map_df with the mapping between the column numers
-    and the old column names
+    and the old column names 
+    (as well as the option of reading current channel #, SM # and inverter # for a specific tag
+    convention)
     '''
-    output_df = input_df.copy()
-    map_df = pd.DataFrame(index=range(len(output_df.columns)), data={'string_names': output_df.columns})
-    output_df.columns = range(len(output_df.columns))
+    currentCols = current_df.columns
+    current_df = current_df.copy()
+    map_df = pd.DataFrame(index=range(len(current_df.columns)), data={'string_names': currentCols})
+    current_df.columns = range(len(current_df.columns))
     
-    return  output_df, map_df
+    if tagConvention == 'SMA':
+        map_df = pd.concat([map_df, 
+                            pd.DataFrame(index=map_df.index, columns=['Inverter','SM','Channel'])])
+        for i,col in enumerate(currentCols):
+            map_df.loc[i,'Channel'] = int(col[-2:])
+            map_df.loc[i,'SM'] = int(col[-20])
+            map_df.loc[i,'Inverter'] = int(col[-25:-23])
+
+    return  current_df, map_df
 
 
 
 
 
-def Quasi_PR(input_df, POAI, GHI=None, frequency='D'):
+def Quasi_PR(input_df, POAI, Tmod=0, Tcoeff=0, frequency='D'):
     ''' 
-    Calculates a the input_df divided by the plane of array irradiance and returns this 
-    resampled by the frequency (e.g. 'D' (daily), 'M' (monthly), etc.). 
-    Also return H_poa, which is the daily irradiation in the plane of array (in Wh)
+    Calculates the input_df (which can be a current or a power) divided by the plane of array 
+    irradiance and returns this resampled by the frequency (e.g. 'D' (daily), 'M' (monthly), etc.). 
+    
+    Also return H_poa, which is the daily irradiation in the plane of array (in Wh, if the POAI is 
+    in W)
     '''
+    print('Calculating Quasi PR')
     input_freq = 60/np.round(int(np.mean(POAI.index[1:] - POAI.index[:-1]))/60e9)
     try:
-        QPR = input_df.resample(frequency).sum().divide(POAI.resample(frequency).sum(), axis='index')
+        QPR = input_df.resample(frequency).sum().divide(
+                (POAI*(1+Tcoeff*(Tmod-25))).resample(frequency).sum(), axis='index')
         H_poa = POAI.resample(frequency).sum()/input_freq
         return QPR, H_poa
 
@@ -64,6 +79,9 @@ def filter_after_aggregate(QPR):
     A general filter for removing features irrelevant to string performance monitoring
     (after aggregating)
     '''
+    print('Filter after aggregate..')
+    QPR=QPR.copy()
+        
     # Remove obvious outliers
     Q1 = QPR.quantile(.1)
     Q9 = QPR.quantile(.9)
@@ -81,7 +99,7 @@ def filter_after_aggregate(QPR):
 
 
 
-def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, clearsky_filter=True,
+def filter_before_aggregate(GHI, latitude, longitude, tz, altitude, clearsky_filter=True,
                             filter_by_hours=False, GHI_cutoff=500):
     ''' 
     A filter for filtering for clearsky (optional) and remain with the [filter_by_hours] hours 
@@ -90,9 +108,15 @@ def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, cl
     If filter_by_hours = x (where x is an integer): Filter for x hours around solar noon
     (before aggregating)
     
+    Returns: 
+     - use_indexes, which is a pandas.Series with boolean data, True for indexes we'd like to keep
+     - clearsky, which is a pandas.DataFrame with GHI, DHI and DNI from pvlib
+     - clearTimes, which is a pandas.Series with boolean data, True for indexes with clear skies
+     - detect_cs_components (optional), which are the components of the detect_clearsky from pvlib
+    
     The clearsky filtering has been optimized for data with 10-minute intervals
     '''
-    input_df = input_df.copy()
+    use_indexes = pd.Series(index=GHI.index, data=True)
     mean_interval = np.round(int(np.mean(GHI.index[1:] - GHI.index[:-1]))/60e9)
 
     GHI_freq = GHI.index.freq
@@ -105,9 +129,8 @@ def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, cl
         print('GHI needs to have a frequency. Clearsky filtering was not possible')
         clearsky_filter=False
     
-    input_df.loc[GHI<GHI_cutoff] = np.nan
-    input_df[input_df<=0] = np.nan
-    
+    use_indexes.loc[GHI<GHI_cutoff] = False
+#    input_df[input_df<=0] = np.nan
     
     print('Calculating clear sky irradiance')
     Location = pvlib.location.Location(latitude, longitude, tz, altitude)
@@ -119,7 +142,7 @@ def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, cl
         GHI_frame = pd.DataFrame(GHI)
         GHI_frame['Date'] = GHI_frame.index.date
         mean_diff = GHI_frame.groupby('Date').mean().values.std()
-        clearTimes, components, alpha = pvlib.clearsky.detect_clearsky(
+        clearTimes, detect_cs_components, alpha = pvlib.clearsky.detect_clearsky(
                                                 measured=GHI, 
                                                 clearsky=clearsky['ghi'], 
                                                 times=GHI.index, 
@@ -132,6 +155,7 @@ def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, cl
                                                 slope_dev=mean_diff/2,
                                                 max_iterations=50,
                                                 return_components=True)
+#        # For tuning of parameters
 #        for key in components.keys():    
 #            print(key, np.sum(components[key]))
 #        print(alpha)
@@ -140,28 +164,25 @@ def filter_before_aggregate(input_df, GHI, latitude, longitude, tz, altitude, cl
     else: # or by fraction of clearsky (and hours)
         clearTimes = (GHI > 0.9*clearsky['ghi'])
 
-    input_df.loc[~clearTimes] = np.nan
-    GHI.loc[~clearTimes] = np.nan
-    GHI.loc[GHI<GHI_cutoff] = np.nan
+    use_indexes.loc[~clearTimes] = False
 
     if filter_by_hours:
         print('Filter by hours...')
-        solarPosition = Location.get_solarposition(input_df.index)
+        solarPosition = Location.get_solarposition(GHI.index)
         solarPosition['Date'] = solarPosition.index.date
 
         solarNoonByDate = pd.Series(index=solarPosition.groupby('Date').min().index,
                             data=[solarPosition.loc[solarPosition['Date']==date,'zenith'].idxmin()
                                   for date in solarPosition.groupby('Date').min().index])
-        solarNoon = pd.Series(index=input_df.index, data=[solarNoonByDate.loc[date] for date 
-                                                          in input_df.index.date])
-        timeDiffs = np.abs(input_df.index-solarNoon)
-        input_df.loc[timeDiffs>pd.Timedelta(str(filter_by_hours/2)+' hours')] = np.nan
-        GHI.loc[timeDiffs>pd.Timedelta(str(filter_by_hours/2)+' hours')] = np.nan
+        solarNoon = pd.Series(index=GHI.index, data=[solarNoonByDate.loc[date] for date 
+                                                          in GHI.index.date])
+        timeDiffs = np.abs(GHI.index-solarNoon)
+        use_indexes.loc[timeDiffs>pd.Timedelta(str(filter_by_hours/2)+' hours')] = False
                 
     if clearsky_filter:
-        return input_df, GHI, clearsky, clearTimes, components
+        return use_indexes, clearsky, clearTimes, detect_cs_components
     else:
-        return input_df, GHI, clearsky, clearTimes
+        return use_indexes, clearsky, clearTimes
 
 
 
